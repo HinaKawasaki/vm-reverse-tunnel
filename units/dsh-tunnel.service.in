@@ -1,0 +1,22 @@
+[Unit]
+Description=Loopback web service reverse SSH tunnel (guest -> host, auto-reconnect)
+Documentation=https://github.com/OWNER/vm-reverse-tunnel
+After=network-online.target dsh-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@SVC_USER@
+Group=@SVC_USER@
+WorkingDirectory=@SVC_HOME@
+Environment=HOME=@SVC_HOME@
+# 脚本自身会等目标端口就绪，所以这里不 Requires=dsh-web.service（避免互相拖死）
+ExecStart=/usr/local/bin/dsh-tunnel.sh
+Restart=always
+RestartSec=3
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

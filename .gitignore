@@ -1,0 +1,12 @@
+# 运行时产物（含登录令牌，绝不能提交）
+web-url.txt
+web-url.txt.bak
+
+# 日志与调试
+*.log
+.dbg/
+nohup.out
+
+# 编辑器/系统
+.DS_Store
+*.swp

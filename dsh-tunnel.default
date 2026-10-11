@@ -1,0 +1,31 @@
+# /etc/default/dsh-tunnel —— 本文件是【模板】，由 install-vm.sh 填入 @...@ 后生成。
+# 脚本 tunnel.sh / url.sh / verify.sh / switch-now.sh 都会读取它。
+# 改完执行： systemctl restart dsh-tunnel.service
+
+# ── 由 install-vm.sh 自动探测填入，通常不用改 ──────────────────────────────
+SVC_USER=@SVC_USER@          # 运行 dsh web 与隧道的用户
+SVC_HOME=@SVC_HOME@          # 该用户的家目录
+SVC_BIN=@SVC_BIN@            # dsh 可执行文件绝对路径
+LOCAL_PORT=@LOCAL_PORT@      # 虚拟机上 dsh web 的端口
+
+# ── 宿主机连接（默认值：地址=本机默认网关，端口=22，账号=当前用户）─────────
+#SSH_HOST=192.168.122.1      # 宿主机地址；留空/注释 = 自动取 `ip route` 的默认网关
+#SSH_PORT=22                 # 宿主机 sshd 端口
+#SSH_USER=yourname           # 宿主机登录账号
+#SSH_KEY=/home/you/.ssh/dsh-remote   # 免密私钥（方向：虚拟机 → 宿主机）
+
+# ── 隧道落点 ────────────────────────────────────────────────────────────────
+# 宿主机上按优先级尝试的落地端口，用空格分隔；第一个是首选
+#HOST_PORT_CANDIDATES="3080 3000"
+
+# 宿主机上的绑定地址：
+#   127.0.0.1  = 仅宿主机本机可访问（默认，无需改宿主机 sshd）
+#   0.0.0.0    = 局域网可访问，需要宿主机 sshd 设 GatewayPorts clientspecified（见 install-host.sh）
+HOST_ADDR=127.0.0.1
+
+# ── 时序（一般不用动）──────────────────────────────────────────────────────
+#READY_GRACE=4          # 建连后观察几秒判定成功
+#RETRY_SEC=3            # 重连间隔
+#UPGRADE_CHECK_SEC=60   # 落在回退端口时，多久检查一次首选端口是否空出
+#SSH_CONNECT_TIMEOUT=10
+#DSH_POLL_SEC=2

@@ -1,0 +1,28 @@
+[Unit]
+Description=DeepSeek Harness Web UI (dsh web) on 127.0.0.1:@LOCAL_PORT@
+Documentation=https://github.com/OWNER/vm-reverse-tunnel
+After=network-online.target
+Wants=network-online.target
+# 切换/抢位期间 3080 可能短暂被占，服务需要“绑定失败 → 重试”多次；
+# 关掉启动频率限制，避免被 systemd 判为 failed 而停止重试。
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=@SVC_USER@
+Group=@SVC_USER@
+WorkingDirectory=@SVC_HOME@
+Environment=HOME=@SVC_HOME@
+Environment=DSH_HOME=@SVC_HOME@/.dsh
+Environment=PATH=@NODE_BIN_DIR@:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# --no-open：无桌面环境，不要尝试拉起浏览器
+# --host/--port 显式写死，和 DSH 隧道脚本的 LOCAL_PORT 保持一致
+ExecStart=@SVC_BIN@ web --host 127.0.0.1 --port @LOCAL_PORT@ --no-open
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
