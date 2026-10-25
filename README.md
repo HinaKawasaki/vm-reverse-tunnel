@@ -59,6 +59,21 @@ libvirt 默认的 NAT 网络里，虚拟机在宿主机身后，宿主机**不�
 - 虚拟机：systemd、`bash`、`ssh` 客户端。
 - **虚拟机 → 宿主机 SSH 免密**（方向别搞反，见 `setup-key.sh`）。
 
+### 依赖清单
+
+脚本会用到下面这些命令。缺了会**明确报错**，而不是给出错误的体检结论
+（v0.1 在宿主机没装 `ss` 时会把"探测失败"读成"端口空闲"，进而误拆健康隧道）：
+
+| 位置 | 命令 | 用途 | 缺少时的影响 |
+|---|---|---|---|
+| 虚拟机 | `bash` / `ssh` / `ip` / `flock` | 建隧道、探网关、单实例锁 | 直接起不来 |
+| 虚拟机 | `curl` | 预检、`verify.sh`、`url.sh` 验 token | 体检与取 URL 失败 |
+| 虚拟机 | `journalctl` | `url.sh` 读 token、`switch-now.sh` 看日志 | 取不到登录 URL |
+| 宿主机 | `ss`（iproute2） | 判断端口归属、"首选端口是否空出" | 无法区分我们的隧道与第三方转发 |
+| 宿主机 | `curl` | 端到端验证隧道是否真的通 | 无法验证 |
+
+Debian/Ubuntu 一条命令：`apt install curl iproute2 util-linux openssh-client`。
+
 ## 快速开始
 
 全部操作在**虚拟机**里进行（`install-vm.sh` 与 `switch-now.sh` 需要 root）。
@@ -91,6 +106,9 @@ tunnel.sh               # 核心守护脚本（装到 /usr/local/bin/dsh-tunnel.
 url.sh                  # 打印当前有效的登录 URL（自动识别落地端口 + 校验 token）
 verify.sh               # 端到端体检
 setup-key.sh            # 生成并安装 虚拟机 → 宿主机 免密
+uninstall.sh            # root：把装进去的东西删干净（含宿主机侧的 GatewayPorts/ufw）
+tests/e2e.sh            # 不需要 libvirt：单机端到端验证隧道状态机
+tests/units.sh          # 不需要 root：DESTDIR 预演安装并校验 unit 渲染
 install-vm.sh           # root：渲染 unit 模板并安装 + enable
 switch-now.sh           # root：一键从手动运行平滑切换到 systemd 托管
 install-host.sh         # root（可选）：宿主机开 GatewayPorts + ufw，用于局域网访问
@@ -167,15 +185,25 @@ journalctl -u dsh-tunnel.service -f       # 实时看重连
 | 浏览器 403 | 用的是非 loopback 主机名，且没配 GatewayPorts/ufw |
 | `Permission denied (publickey)` | 免密没配好；重跑 `setup-key.sh` 并确认公钥进了宿主机的 `authorized_keys` |
 | `journalctl` 提示权限不足 | 普通用户看不到 system 单元日志；用运行该服务的用户或 root 执行 |
+| 体检说"无人监听"但其实有隧道 | 宿主机没装 `ss`（iproute2）。v0.2 起会明确提示 `NOSS`，先装 iproute2 |
+| `url.sh` 只列出候选、不标注当前端口 | 同上；`url.sh` 需要宿主机的 `ss` 才能按 uid 认领端口 |
 
 ## 卸载 / 回滚
 
 ```bash
-sudo systemctl disable --now dsh-tunnel.service dsh-web.service
-sudo rm -f /etc/systemd/system/dsh-{web,tunnel}.service \
-           /usr/local/bin/dsh-tunnel.sh /etc/default/dsh-tunnel
-sudo systemctl daemon-reload
+sudo bash uninstall.sh --dry-run    # 先看它准备删什么
+sudo bash uninstall.sh             # 虚拟机侧：停服务、删 unit/脚本/配置
 ```
+
+如果当初跑过 `install-host.sh`（开了局域网访问），还要在**宿主机**上清掉
+`sshd_config.d` 里的 GatewayPorts 与 ufw 规则：
+
+```bash
+sudo bash uninstall.sh --purge-host
+```
+
+> v0.2 之前没有这一步：只删 unit 会留下 `sshd_config.d/10-dsh-tunnel.conf` 和 ufw 放行规则，
+> 表面上"卸载了"，实际局域网仍然可达。
 
 ## 设计取舍与已知限制
 
@@ -183,6 +211,24 @@ sudo systemctl daemon-reload
 - **宿主机的落地端口必须可用**：如果候选端口全被占用，隧道起不来（会持续重试）。首选/回退机制就是为了绕开"某个程序偶尔占着某端口"的场景。
 - **默认只绑回环**：要局域网访问必须动宿主机 sshd 的 `GatewayPorts`，这是 OpenSSH 的设计，不是本项目的限制。
 - **依赖系统服务名**：unit 名带 `dsh-` 前缀。换成别的服务时，改 `units/*.in` 与 `tunnel.sh` 里的 `LOCAL_PORT` 即可，逻辑与 dsh 无关。
+
+## 开发与测试
+
+不需要 libvirt，也不需要两台机器：
+
+```bash
+bash tests/units.sh             # 渲染 systemd unit 并校验（不需要 root）
+bash tests/e2e.sh ./tunnel.sh   # 单机 e2e：假后端 + 本机 sshd，跑 7 个场景
+```
+
+`tests/e2e.sh` 让同一台机器同时扮演虚拟机与宿主机（`ssh -R` 打到 `127.0.0.1:22`，
+走的是真实 sshd 转发），会自己生成一次性测试密钥、结束时清理。默认端口
+`18080/13080/13000`，可用 `LOCAL_PORT_T` / `PREFERRED` / `FALLBACK` 覆盖。
+
+CI（`.github/workflows/ci.yml`）跑同样的三件事：`bash -n` + `shellcheck`、unit 渲染、
+以及在 runner 上起一个 `:2222` 的 sshd 后执行 e2e。
+
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 实测记录
 
@@ -198,6 +244,8 @@ sudo systemctl daemon-reload
 | 端到端鉴权 | 无 token → 401；带 token → 303 + Set-Cookie；带 cookie → 200（完整页面） |
 | 端口归属误判防护 | `verify.sh` 用 `ss -tlnHe` 的 uid 区分"我们的隧道"与第三方转发，避免假绿灯 |
 | `SIGTERM` 收尸 | 主脚本退出后无残留 ssh 子进程 |
+| 单机 e2e（Ubuntu 26.04 / OpenSSH 10.2 / 非 root） | 7 个场景全绿：就绪等待、回退、升级、后端猝死自愈、收尸、探测失败不误拆、重复启动不抢端口 |
+| 真实云服务器（`172.16.1.1`，SSH 回环） | 同上 7 个场景，27 项断言通过；旧版本在同套测试下有 2 个缺陷 + 1 个失败（假活 / 误拆 / 双实例） |
 
 ## License
 
