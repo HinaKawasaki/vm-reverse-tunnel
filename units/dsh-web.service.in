@@ -1,6 +1,6 @@
 [Unit]
 Description=DeepSeek Harness Web UI (dsh web) on 127.0.0.1:@LOCAL_PORT@
-Documentation=https://github.com/OWNER/vm-reverse-tunnel
+Documentation=@REPO_URL@
 After=network-online.target
 Wants=network-online.target
 # 切换/抢位期间 3080 可能短暂被占，服务需要“绑定失败 → 重试”多次；

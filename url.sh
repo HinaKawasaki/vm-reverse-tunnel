@@ -24,6 +24,10 @@ CONF=/etc/default/dsh-tunnel
 default_gateway() { ip route show default 2>/dev/null | awk '{print $3; exit}'; }
 
 
+for _c in curl ssh; do
+  command -v "$_c" >/dev/null 2>&1 || { echo "缺少依赖：${_c}（apt install curl openssh-client）" >&2; exit 2; }
+done
+
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
 SRC_DIR="$(dirname "$SELF")"
 UNIT="${UNIT:-dsh-web.service}"
@@ -100,6 +104,7 @@ fi
 # ── 2) 判断我们的隧道当前落在宿主机的哪个端口 ──────────────────────────────
 # 只看"端口在监听"不够：VS Code 的转发也会监听，且指向同一个 dsh。
 # 用 ss -tlnHe 的 uid 字段区分（只有 uid == 我们 SSH 账号的那条才是我们的隧道）。
+# shellcheck disable=SC2086  # 有意按空格拆分端口列表
 our_port=$(ssh -T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
                -o ConnectTimeout=6 -i "$SSH_KEY" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
                bash -s -- $CANDIDATES <<'RS' 2>/dev/null

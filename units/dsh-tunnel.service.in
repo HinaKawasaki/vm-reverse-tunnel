@@ -1,6 +1,6 @@
 [Unit]
 Description=Loopback web service reverse SSH tunnel (guest -> host, auto-reconnect)
-Documentation=https://github.com/OWNER/vm-reverse-tunnel
+Documentation=@REPO_URL@
 After=network-online.target dsh-web.service
 Wants=network-online.target
 

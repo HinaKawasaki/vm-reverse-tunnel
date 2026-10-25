@@ -36,6 +36,11 @@ SSH_BASE=(-T -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=acc
 
 hcode() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || echo 000; }
 
+# 依赖：本机要有 curl/ssh；宿主机要有 ss/curl（缺了会明确提示，不会假装"隧道死了"）
+for _c in curl ssh; do
+  command -v "$_c" >/dev/null 2>&1 || { echo "缺少依赖：${_c}（apt install curl openssh-client）" >&2; exit 2; }
+done
+
 echo "== 1. 虚拟机内 dsh web (127.0.0.1:${LOCAL_PORT}) =="
 c=$(hcode "http://127.0.0.1:${LOCAL_PORT}/")
 [ "$c" != "000" ] && ok "dsh web 响应 HTTP $c（401=需 token，正常）" || bad "dsh web 无响应"
@@ -56,6 +61,15 @@ done
 echo "== 3. 宿主机侧隧道（按 uid 归属识别，排除 VS Code 转发）=="
 probe=$(ssh "${SSH_BASE[@]}" bash -s -- "$PORTS" <<'RSCRIPT' 2>/dev/null
 uid=$(id -u)
+# 宿主机没装 iproute2 时 ss 不存在：如实报 NOSS（旧版会误报成"无人监听"）
+if ! command -v ss >/dev/null 2>&1; then
+  for p in $*; do echo "$p NOSS -"; done
+  exit 0
+fi
+if ! command -v curl >/dev/null 2>&1; then
+  for p in $*; do echo "$p NOCURL -"; done
+  exit 0
+fi
 for p in $*; do
   line=$(ss -tlnHe "sport = :$p" 2>/dev/null | head -1)
   if [ -z "$line" ]; then
@@ -90,6 +104,12 @@ else
         ;;
       OTHER)
         inf "宿主机 127.0.0.1:${p} 在监听，但属于别的进程（HTTP ${code}）——不是我们的隧道，已排除"
+        ;;
+      NOSS)
+        inf "宿主机缺少 ss（iproute2），无法判断 127.0.0.1:${p} 的归属——请先在宿主机装 iproute2"
+        ;;
+      NOCURL)
+        inf "宿主机缺少 curl，无法做端到端验证——请先在宿主机装 curl"
         ;;
       ABSENT)
         inf "宿主机 127.0.0.1:${p} 无人监听"

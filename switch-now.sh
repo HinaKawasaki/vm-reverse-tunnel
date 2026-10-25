@@ -58,6 +58,11 @@ log() { printf '%s [switch] %s\n' "$(date '+%F %T')" "$*"; }
 
 [ "$(id -u)" -eq 0 ] || { echo "错误：必须以 root 运行（虚拟机内没有 sudo，请用 root shell）" >&2; exit 1; }
 
+# 依赖：缺了就直接说，别等到中途才失败
+for _c in systemctl su curl journalctl; do
+  command -v "$_c" >/dev/null 2>&1 || { echo "错误：缺少命令 ${_c}（Debian/Ubuntu: apt install iproute2 curl util-linux openssh-client）" >&2; exit 1; }
+done
+
 # ── 分离：优先 systemd-run（独立 cgroup，免疫会话清理），退路 setsid ────────
 if [ "$FOREGROUND" -eq 0 ] && [ "${DSH_SWITCH_DETACHED:-0}" != "1" ]; then
   if [ "$SKIP_CONFIRM" -eq 0 ] && [ -t 0 ]; then
@@ -108,7 +113,9 @@ log "===== 开始切换到 systemd 托管（PID $$）====="
 # ── 1) 预检：同样参数换端口先验证一遍 ─────────────────────────────────────
 if [ "$PREFLIGHT" = "1" ]; then
   log "预检：用同样参数在 127.0.0.1:${PREFLIGHT_PORT} 试启动 dsh web"
-  su "$SVC_USER" -c "cd $SVC_HOME && HOME=$SVC_HOME DSH_HOME=$SVC_HOME/.dsh PATH=$SVC_PATH exec $SVC_BIN web --host 127.0.0.1 --port $PREFLIGHT_PORT --no-open" \
+  # setsid：让 su 及其子进程自成进程组，收尸时按进程组发信号。
+  # （以前是按命令行字符串 pkill -f "port 309[9]"：既写死了 3099，也可能误杀无关进程）
+  setsid su "$SVC_USER" -c "cd '$SVC_HOME' && HOME='$SVC_HOME' DSH_HOME='$SVC_HOME/.dsh' PATH='$SVC_PATH' exec '$SVC_BIN' web --host 127.0.0.1 --port $PREFLIGHT_PORT --no-open" \
     >>"$LOG" 2>&1 &
   pf_pid=$!
   pf_code=000
@@ -118,13 +125,18 @@ if [ "$PREFLIGHT" = "1" ]; then
     kill -0 "$pf_pid" 2>/dev/null || break
     sleep 1
   done
-  kill -TERM "$pf_pid" 2>/dev/null
-  wait "$pf_pid" 2>/dev/null
-  sleep 1
-  # su 不一定转发信号，按端口找残留进程收尸
-  pkill -TERM -f "port 309[9]" 2>/dev/null || true
-  sleep 1
-  pkill -KILL -f "port 309[9]" 2>/dev/null || true
+  # 收尸：TERM 整个进程组 → 等预检端口释放 → 仍在则 KILL
+  kill -TERM -- "-$pf_pid" 2>/dev/null || kill -TERM "$pf_pid" 2>/dev/null || true
+  wait "$pf_pid" 2>/dev/null || true
+  for _ in $(seq 1 30); do
+    (exec 3<>/dev/tcp/127.0.0.1/"$PREFLIGHT_PORT") 2>/dev/null || break
+    sleep 0.2
+  done
+  if (exec 3<>/dev/tcp/127.0.0.1/"$PREFLIGHT_PORT") 2>/dev/null; then
+    log "预检进程未响应 TERM，强制结束整个进程组 ${pf_pid}"
+    kill -KILL -- "-$pf_pid" 2>/dev/null || true
+    sleep 1
+  fi
   if [ "$pf_code" = "000" ]; then
     log "预检失败：dsh web 在 ${PREFLIGHT_PORT} 上没能起来（HTTP=$pf_code）。"
     log "已中止，当前会话保持原样。请检查下面日志。"
@@ -144,12 +156,16 @@ if systemctl is-active --quiet dsh-tunnel.service; then
   systemctl stop dsh-tunnel.service
   sleep 1
 fi
-mapfile -t stale_tunnels < <(pgrep -f 'tunnel[.]sh' || true)
+# 只清理「本服务用户」跑的隧道脚本，且锚定脚本名（以前是全局 pgrep -f tunnel.sh，
+# root 执行时会连别的用户/别的项目里的同名脚本一起杀掉）
+mapfile -t stale_tunnels < <(pgrep -u "$SVC_USER" -f '(^|/)dsh-tunnel\.sh( |$)|(^|/)tunnel\.sh( |$)' || true)
 if [ "${#stale_tunnels[@]}" -gt 0 ]; then
   log "清理残留的手动隧道实例：${stale_tunnels[*]}"
   kill -TERM "${stale_tunnels[@]}" 2>/dev/null || true
   sleep 2
-  mapfile -t stale_tunnels < <(pgrep -f 'tunnel[.]sh' || true)
+  # 只清理「本服务用户」跑的隧道脚本，且锚定脚本名（以前是全局 pgrep -f tunnel.sh，
+# root 执行时会连别的用户/别的项目里的同名脚本一起杀掉）
+mapfile -t stale_tunnels < <(pgrep -u "$SVC_USER" -f '(^|/)dsh-tunnel\.sh( |$)|(^|/)tunnel\.sh( |$)' || true)
   if [ "${#stale_tunnels[@]}" -gt 0 ]; then
     kill -KILL "${stale_tunnels[@]}" 2>/dev/null || true
   fi
@@ -197,7 +213,7 @@ log "3080 端口已释放（原 Agent 会话到此结束）"
 web_code=000
 logged_dead=0
 for _ in $(seq 1 90); do
-  web_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${LOCAL_PORT}/ || true)
+  web_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${LOCAL_PORT}/" || true)
   [ "$web_code" != "000" ] && break
   if [ "$logged_dead" -eq 0 ] && ! systemctl is-active --quiet dsh-web.service; then
     logged_dead=1
