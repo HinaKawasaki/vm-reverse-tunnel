@@ -65,14 +65,13 @@ SSH_OPTS=(
 TUNNEL_PID=""
 WATCHDOG_PID=""
 CURRENT_PORT=""
-LOCK_FD_OPEN=""
 
 # 虚拟机上本地服务是否已监听（不依赖 ss/netstat）
 dsh_ready() {
   (exec 3<>"/dev/tcp/${LOCAL_ADDR}/${LOCAL_PORT}") >/dev/null 2>&1
 }
 
-preferred_port() { printf '%s\n' ${HOST_PORT_CANDIDATES%% *}; }
+preferred_port() { printf '%s\n' "${HOST_PORT_CANDIDATES%% *}"; }
 
 # ── 单实例锁：避免手动实例与 systemd 实例互抢端口 ───────────────────────────
 acquire_lock() {
@@ -90,7 +89,6 @@ acquire_lock() {
     log "已有实例在运行（锁 ${f}），本实例退出"
     exit 0
   fi
-  LOCK_FD_OPEN=1
 }
 
 # 宿主机上某端口的状态：BUSY / FREE / UNKNOWN

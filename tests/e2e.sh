@@ -274,7 +274,7 @@ before=$(grep -c "隧道已建立" "$W/tun.log")
 sleep 12   # 3 个升级检查周期
 after=$(grep -c "隧道已建立" "$W/tun.log")
 if [ "$after" -gt "$before" ]; then
-  bug "探测失败被当成“端口空闲”：健康隧道在 12s 内被拆了 $((after-before)) 次（$before → $after）"
+  bug "探测失败被当成「端口空闲」：健康隧道在 12s 内被拆了 $((after-before)) 次（$before → $after）"
   bug "对应改进项：host_port_busy 改成 BUSY/FREE/UNKNOWN 三态，UNKNOWN 绝不触发升级"
 else
   ok "探测失败没有触发误拆（12s 内没有多余重连）"
