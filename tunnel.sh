@@ -20,6 +20,9 @@
 #    7. 收到 SIGTERM/SIGINT 时收尸退出（systemd stop 用）。
 #
 #  可覆盖配置：/etc/default/dsh-tunnel（见 dsh-tunnel.default）
+#
+#  不限于 dsh web：任何「只监听回环」的 TCP 服务都能用，只需把 LOCAL_PORT 指过去；
+#  想要更强的健康判断（端口开着但服务没就绪）就设 HEALTH_URL。
 # ============================================================================
 set -u
 
@@ -45,6 +48,8 @@ UPGRADE_CHECK_SEC="${UPGRADE_CHECK_SEC:-60}"                # 回退状态下检
 HEALTH_CHECK_SEC="${HEALTH_CHECK_SEC:-3}"                   # 隧道存活期回探本地服务的间隔
 SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
 DSH_POLL_SEC="${DSH_POLL_SEC:-2}"                           # 等本地服务就绪的轮询间隔
+SERVICE_LABEL="${SERVICE_LABEL:-本地服务}"                    # 日志里怎么称呼被守护的服务
+HEALTH_URL="${HEALTH_URL:-}"                                # 可选：用 HTTP 探活替代 TCP 连通性
 LOCK_FILE="${LOCK_FILE:-}"                                  # 单实例锁文件；留空=自动挑一个可写路径
 
 # ── 工具 ────────────────────────────────────────────────────────────────────
@@ -66,9 +71,15 @@ TUNNEL_PID=""
 WATCHDOG_PID=""
 CURRENT_PORT=""
 
-# 虚拟机上本地服务是否已监听（不依赖 ss/netstat）
-dsh_ready() {
-  (exec 3<>"/dev/tcp/${LOCAL_ADDR}/${LOCAL_PORT}") >/dev/null 2>&1
+# 本地服务是否可用。
+#   默认：TCP 连通性（/dev/tcp，不依赖 ss/netstat）
+#   HEALTH_URL 非空：改用 HTTP 探活（能识别"端口开着但服务 500/未就绪"）
+svc_ready() {
+  if [ -n "$HEALTH_URL" ]; then
+    curl -fsS --max-time 3 -o /dev/null "$HEALTH_URL" 2>/dev/null
+  else
+    (exec 3<>"/dev/tcp/${LOCAL_ADDR}/${LOCAL_PORT}") >/dev/null 2>&1
+  fi
 }
 
 preferred_port() { printf '%s\n' "${HOST_PORT_CANDIDATES%% *}"; }
@@ -150,12 +161,16 @@ trap cleanup TERM INT
 main() {
   local pref port pid rc established
   acquire_lock
+  if [ -n "$HEALTH_URL" ] && ! command -v curl >/dev/null 2>&1; then
+    log "错误：设置了 HEALTH_URL 但没有 curl，无法做健康检查"
+    exit 1
+  fi
   pref=$(preferred_port)
   log "启动：${SSH_USER}@${SSH_HOST}:${SSH_PORT}  ←  落地端口候选 [${HOST_PORT_CANDIDATES}]  →  ${LOCAL_ADDR}:${LOCAL_PORT}（绑定 ${HOST_ADDR}）"
 
   while :; do
-    while ! dsh_ready; do
-      log "等待本地服务就绪（${LOCAL_ADDR}:${LOCAL_PORT}）..."
+    while ! svc_ready; do
+      log "等待${SERVICE_LABEL}就绪（${LOCAL_ADDR}:${LOCAL_PORT}${HEALTH_URL:+，健康检查 $HEALTH_URL}）..."
       sleep "$DSH_POLL_SEC"
     done
 
@@ -179,8 +194,8 @@ main() {
         while kill -0 "$pid" 2>/dev/null; do
           sleep "$HEALTH_CHECK_SEC"
           kill -0 "$pid" 2>/dev/null || break
-          if ! dsh_ready; then
-            log "本地服务 ${LOCAL_ADDR}:${LOCAL_PORT} 失联，主动断开隧道以触发重连"
+          if ! svc_ready; then
+            log "${SERVICE_LABEL} ${LOCAL_ADDR}:${LOCAL_PORT} 失联，主动断开隧道以触发重连"
             kill -TERM "$pid" 2>/dev/null
             break
           fi

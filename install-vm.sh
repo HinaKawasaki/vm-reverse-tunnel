@@ -95,6 +95,13 @@ mkdir -p "$(dirname "$BIN_DST")" "$UNIT_DIR" "$(dirname "$DEFAULT_DST")"
 echo "[install-vm] 安装 $BIN_DST"
 install -m 0755 "$SRC_DIR/tunnel.sh" "$BIN_DST"
 
+# 辅助命令：不装的话，用户删掉克隆目录后 README 里的 bash url.sh / verify.sh 就没了
+BIN_DIR="$(dirname "$BIN_DST")"
+for f in url.sh verify.sh setup-key.sh uninstall.sh; do
+  install -m 0755 "$SRC_DIR/$f" "$BIN_DIR/vmrt-${f%.sh}"
+done
+echo "[install-vm] 安装辅助命令：$BIN_DIR/vmrt-{url,verify,setup-key,uninstall}"
+
 for u in dsh-web dsh-tunnel; do
   echo "[install-vm] 生成 $UNIT_DIR/$u.service"
   render "$SRC_DIR/units/$u.service.in" "$UNIT_DIR/$u.service"

@@ -2,6 +2,8 @@
 
 > 让跑在 KVM/libvirt 虚拟机里、**只监听 `127.0.0.1`** 的服务，在宿主机上稳定可达 —— 由虚拟机主动拨出的反向 SSH 隧道，带开机自启、断线自愈、端口竞争自动让位。
 
+**[English](README.en.md)** ｜ 中文
+
 **English**: A self-healing reverse SSH tunnel that exposes a loopback-only service running inside a KVM/libvirt guest on the host machine (and optionally on the LAN). The guest initiates the connection, so the host needs no polling and no knowledge of the guest's IP. Managed by systemd, with automatic reconnect, boot-time startup, and a preferred/fallback host port strategy. Built for **dsh web** (DeepSeek Harness Web), reusable for any loopback-only HTTP service.
 
 ```
@@ -51,6 +53,10 @@ libvirt 默认的 NAT 网络里，虚拟机在宿主机身后，宿主机**不�
 - **后端失联自动断开重连**：隧道存活期间每 `HEALTH_CHECK_SEC`（默认 3s）回探一次本地服务；
   服务崩溃/重启时主动断开隧道，避免宿主机端口"假活着"（能连上但 502/connection refused）。
 - **单实例锁**：同一台机器上重复启动（比如手动一份 + systemd 一份）会直接退出，不会互抢端口。
+- **不绑定具体服务**：任何只监听回环的 TCP 服务都能守护；设 `HEALTH_URL` 可升级为 HTTP 健康检查，
+  端口开着但服务没就绪时不会建隧道。
+- **配置只有一份**：仓库里永远是通用值，本机差异写进 gitignored 的 `local.env`，
+  `deploy.sh` 负责渲染；集群/多机部署不会再出现"仓库和机器各改各的"。
 - **运维小工具**：`verify.sh` 端到端体检（能区分"我们的隧道"和"别人的转发"），`url.sh` 直接打印登录 URL。
 
 ## 前置条件
@@ -76,28 +82,34 @@ Debian/Ubuntu 一条命令：`apt install curl iproute2 util-linux openssh-clien
 
 ## 快速开始
 
-全部操作在**虚拟机**里进行（`install-vm.sh` 与 `switch-now.sh` 需要 root）。
+全部操作在**虚拟机**里进行（`deploy.sh` 与 `switch-now.sh` 需要 root）。
 
 ```bash
 git clone https://github.com/<你>/vm-reverse-tunnel.git
 cd vm-reverse-tunnel
 
-# 1) 配置 虚拟机 → 宿主机 免密（按提示把那行公钥装到宿主机）
+# 1) 只写本机差异（仓库里永远是通用值；local.env 已被 .gitignore 忽略）
+cp local.env.example local.env && vi local.env
+
+# 2) 配置 虚拟机 → 宿主机 免密（按提示把那行公钥装到宿主机）
 bash setup-key.sh
 
-# 2) 安装脚本 + systemd unit（自动探测 dsh 用户/家目录/可执行文件/端口）
-sudo bash install-vm.sh
+# 3) 部署：安装 unit + 脚本 + 生成配置（先 --dry-run 看效果，不碰系统）
+bash deploy.sh --dry-run
+sudo bash deploy.sh
 
-# 3) 一键平滑切换成 systemd 托管（带预检，推荐前台跑，进度直接可见）
+# 4) 一键平滑切换成 systemd 托管（带预检，推荐前台跑，进度直接可见）
 sudo bash switch-now.sh -f
 
-# 4) 体检 / 拿登录 URL
-bash verify.sh
-bash url.sh
+# 5) 体检 / 拿登录 URL（装好后有快捷命令）
+vmrt-verify
+vmrt-url
 ```
 
-> `install-vm.sh` 只安装不启动（适合先看效果）；`switch-now.sh` 会把正在手动跑的实例换成 systemd 托管，
+> `deploy.sh` 只安装不启动；`switch-now.sh` 会把正在手动跑的实例换成 systemd 托管，
 > **过程中当前 Web 会话会断开**（会话数据已持久化，重连后仍在）。
+>
+> 不想用 `local.env` 也行：直接 `sudo bash install-vm.sh` 仍然有效（自动探测用户/家目录/可执行文件）。
 
 ## 目录结构
 
@@ -107,9 +119,13 @@ url.sh                  # 打印当前有效的登录 URL（自动识别落地�
 verify.sh               # 端到端体检
 setup-key.sh            # 生成并安装 虚拟机 → 宿主机 免密
 uninstall.sh            # root：把装进去的东西删干净（含宿主机侧的 GatewayPorts/ufw）
+deploy.sh               # root：仓库 → 本机（读 local.env，写配置托管块）
+local.env.example       # 本机私有配置的模板（复制成 local.env，gitignored）
 tests/e2e.sh            # 不需要 libvirt：单机端到端验证隧道状态机
 tests/units.sh          # 不需要 root：DESTDIR 预演安装并校验 unit 渲染
-install-vm.sh           # root：渲染 unit 模板并安装 + enable
+tests/deploy.sh         # 不需要 root：验证 local.env → 配置托管块（幂等/保留块外内容）
+CHANGELOG.md            # 版本变更记录
+install-vm.sh           # root：渲染 unit 模板并安装 + enable（deploy.sh 也调它）
 switch-now.sh           # root：一键从手动运行平滑切换到 systemd 托管
 install-host.sh         # root（可选）：宿主机开 GatewayPorts + ufw，用于局域网访问
 dsh-tunnel.default      # /etc/default/dsh-tunnel 的模板（配置项都在这里）
@@ -129,11 +145,41 @@ units/dsh-tunnel.service.in   # 隧道守护（模板）
 | `SSH_PORT` / `SSH_USER` / `SSH_KEY` | `22` / 当前用户 / `~/.ssh/dsh-remote` | 宿主机 sshd 端口、账号、私钥 |
 | `HOST_PORT_CANDIDATES` | `"3080 3000"` | 宿主机落地端口，按优先级尝试；第一个是首选 |
 | `HOST_ADDR` | `127.0.0.1` | 隧道绑定地址；`0.0.0.0` 才对外（需宿主机 GatewayPorts） |
+| `SERVICE_LABEL` | `本地服务` | 只影响日志措辞 |
+| `HEALTH_URL` | 空 | 设了就用 HTTP 探活替代 TCP 连通性判断（能识别"端口开着但服务 500"） |
 | `HEALTH_CHECK_SEC` | `3` | 隧道存活期回探本地服务的间隔 |
 | `LOCK_FILE` | 自动 | 单实例锁文件；非 root 时自动退到 `$TMPDIR` |
 | `READY_GRACE` / `RETRY_SEC` / `UPGRADE_CHECK_SEC` … | `4` / `3` / `60` | 时序参数，一般不用动 |
 
 改完执行 `sudo systemctl restart dsh-tunnel.service`。
+
+## 守护别的服务（不限于 dsh web）
+
+这套东西只依赖"服务只监听回环 + 虚拟机自己知道它就绪没有"，与 dsh 无关。
+以 Jupyter 为例：
+
+```bash
+# local.env
+cat > local.env <<'EOF'
+LOCAL_PORT=8888
+SERVICE_LABEL="jupyter"
+HEALTH_URL=http://127.0.0.1:8888/api
+HOST_PORT_CANDIDATES="8888 8889"
+SVC_USER=you
+SVC_HOME=/home/you
+SVC_BIN=/usr/bin/python3          # 仅 unit 渲染需要，隧道本身不关心
+EOF
+
+sudo bash deploy.sh --restart
+```
+
+要点：
+
+- **不设 `HEALTH_URL`** 时只用 TCP 连通性判断（任何协议都能用）；
+- 设了 `HEALTH_URL` 就必须让该 URL 在"服务可用"时返回 2xx/3xx，
+  否则隧道会一直不建立（这是有意的：宁可不通，也不要把半死的服务暴露出去）；
+- 服务本身还是要自己拉起（本项目的 `dsh-web.service` 只是顺手管了 dsh），
+  隧道只负责"虚拟机 → 宿主机"这一段。
 
 ## 局域网访问（可选）
 
@@ -156,15 +202,21 @@ sudo systemctl restart dsh-tunnel.service
 
 ## 日常运维
 
+装好之后 `/usr/local/bin` 下有四个快捷命令（等价于仓库里的同名脚本）：
+
 ```bash
-bash verify.sh                            # 体检：服务、隧道、端到端
-bash url.sh                               # 当前有效的登录 URL（自动识别端口）
-bash url.sh --all                         # 列出所有候选端口的 URL
-bash url.sh --write                       # 写入 web-url.txt，之后 cat 即可看
+vmrt-verify                     # 体检：服务、隧道、端到端
+vmrt-url                        # 当前有效的登录 URL（自动识别端口）
+vmrt-url --all                  # 列出所有候选端口的 URL
+vmrt-url --write                # 写入状态文件，之后 cat 即可看
+vmrt-setup-key                  # 重新配置免密
+sudo vmrt-uninstall             # 卸载（--purge-host 连宿主机侧一起清）
 
 systemctl status dsh-web.service dsh-tunnel.service
 journalctl -u dsh-tunnel.service -f       # 实时看重连
 ```
+
+> 也可以在克隆目录里直接 `bash verify.sh` / `bash url.sh`，两者行为一致。
 
 **关于登录令牌（以 dsh web 为例，概念通用）**：
 
@@ -218,15 +270,16 @@ sudo bash uninstall.sh --purge-host
 
 ```bash
 bash tests/units.sh             # 渲染 systemd unit 并校验（不需要 root）
-bash tests/e2e.sh ./tunnel.sh   # 单机 e2e：假后端 + 本机 sshd，跑 7 个场景
+bash tests/deploy.sh            # local.env → 配置托管块：幂等、保留块外内容、自撞检测
+bash tests/e2e.sh ./tunnel.sh   # 单机 e2e：假后端 + 本机 sshd，跑 8 个场景
 ```
 
 `tests/e2e.sh` 让同一台机器同时扮演虚拟机与宿主机（`ssh -R` 打到 `127.0.0.1:22`，
 走的是真实 sshd 转发），会自己生成一次性测试密钥、结束时清理。默认端口
 `18080/13080/13000`，可用 `LOCAL_PORT_T` / `PREFERRED` / `FALLBACK` 覆盖。
 
-CI（`.github/workflows/ci.yml`）跑同样的三件事：`bash -n` + `shellcheck`、unit 渲染、
-以及在 runner 上起一个 `:2222` 的 sshd 后执行 e2e。
+CI（`.github/workflows/ci.yml`）跑同样的四件事：`bash -n` + `shellcheck`、unit 渲染、
+`deploy.sh` 渲染校验，以及在 runner 上起一个 `:2222` 的 sshd 后执行 e2e。
 
 变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 

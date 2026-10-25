@@ -37,12 +37,14 @@ jobs:
           shellcheck -x -S warning "${files[@]}"
 
   units:
-    name: systemd unit 渲染（非 root）
+    name: 离线校验（unit / deploy 渲染，非 root）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: DESTDIR 预演 + systemd-analyze verify
         run: bash tests/units.sh
+      - name: deploy.sh 托管块（幂等 / 保留块外内容 / 自撞检测）
+        run: bash tests/deploy.sh
 
   e2e:
     name: 端到端（真实 sshd / 无需 libvirt）

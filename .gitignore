@@ -10,3 +10,6 @@ nohup.out
 # 编辑器/系统
 .DS_Store
 *.swp
+
+# 本机私有配置（由 deploy.sh 读取，绝不提交）
+local.env

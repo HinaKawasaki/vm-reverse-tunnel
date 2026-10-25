@@ -80,6 +80,9 @@ done
 
 say "删除脚本与配置"
 run rm -f "$BIN"
+for f in url verify setup-key uninstall; do
+  run rm -f "/usr/local/bin/vmrt-${f}"
+done
 [ "$KEEP_CONFIG" -eq 1 ] && say "保留 $CONF（--keep-config）" || run rm -f "$CONF"
 run rm -f "$SWITCH_LOG"
 

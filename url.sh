@@ -29,9 +29,8 @@ for _c in curl ssh; do
 done
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
-SRC_DIR="$(dirname "$SELF")"
 UNIT="${UNIT:-dsh-web.service}"
-STATE="${WEB_URL_STATE:-$SRC_DIR/web-url.txt}"
+STATE="${WEB_URL_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/vm-reverse-tunnel/web-url.txt}"
 CANDIDATES="${HOST_PORT_CANDIDATES:-3080 3000}"
 LOCAL_PORT="${LOCAL_PORT:-3080}"   # 虚拟机上 dsh web 的端口（用于当场验证 token）
 
@@ -140,7 +139,8 @@ else
 fi
 
 if [ "$WRITE" -eq 1 ]; then
-  { echo "# dsh web 登录 URL —— 由 url.sh 于 $(date '+%F %T') 写入"; echo "# 端口变化或 dsh 重启后重跑： bash $SELF --write"; } > "$STATE"
+  mkdir -p "$(dirname "$STATE")"
+  { echo "# dsh web 登录 URL —— 由 url.sh 于 $(date '+%F %T') 写入"; echo "# 端口变化或 dsh 重启后重跑： vmrt-url --write"; } > "$STATE"
   if [ -n "${our_port:-}" ] && [ "$WANT_PORT" != "ALL" ]; then
     mk_url "${WANT_PORT:-$our_port}" >> "$STATE"
   else

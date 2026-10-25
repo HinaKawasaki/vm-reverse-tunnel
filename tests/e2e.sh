@@ -281,6 +281,38 @@ else
 fi
 stop_tunnel
 
+# ── S8：HEALTH_URL ──────────────────────────────────────────────────────────
+sec "S8. HEALTH_URL：端口开着但健康检查不通过时不该建隧道"
+stop_tunnel; unsquat 2>/dev/null; sleep 1
+[ -n "$BACKEND_PID" ] || start_backend
+run_with_health() {  # run_with_health <健康检查 URL>
+  : >"$W/tun.log"
+  env -i PATH="$PATH" HOME="$HOME" \
+      SSH_HOST="$SSH_HOST_T" SSH_PORT="$SSH_PORT_T" SSH_USER="$SSH_USER_T" SSH_KEY="$SSH_KEY_T" \
+      LOCAL_ADDR=127.0.0.1 LOCAL_PORT="$LOCAL_PORT_T" HOST_ADDR=127.0.0.1 \
+      HOST_PORT_CANDIDATES="$PREFERRED $FALLBACK" \
+      READY_GRACE=2 RETRY_SEC=2 DSH_POLL_SEC=1 UPGRADE_CHECK_SEC=999 \
+      LOCK_FILE="$W/lock" HEALTH_URL="$1" SERVICE_LABEL="假后端" \
+      setsid bash "$TUNNEL_SH" >>"$W/tun.log" 2>&1 &
+  TUN_PID=$!
+}
+run_with_health "http://127.0.0.1:${LOCAL_PORT_T}/does-not-exist.txt"
+sleep 6
+if listening "$PREFERRED" || listening "$FALLBACK"; then
+  bug "健康检查返回 404，隧道却已经建立（HEALTH_URL 没生效）"
+else
+  ok "健康检查不通过时拒绝建隧道（端口开着也没用）"
+fi
+grep -q "健康检查" "$W/tun.log" && ok "日志里带上了健康检查 URL" || inf "（日志没提健康检查 URL）"
+grep -q "假后端" "$W/tun.log" && ok "SERVICE_LABEL 生效（日志称呼为「假后端」）" || inf "（SERVICE_LABEL 未体现）"
+stop_tunnel
+
+run_with_health "http://127.0.0.1:${LOCAL_PORT_T}/marker.txt"
+if wait_log "隧道已建立" 20; then ok "健康检查通过后正常建立隧道"; else bad "健康检查通过但 20s 内没建起来"; show_log; fi
+[ "$(serving "$PREFERRED" 2>/dev/null)" = "200" ] || [ "$(serving "$FALLBACK" 2>/dev/null)" = "200" ] \
+  && ok "端到端 200" || bad "端到端不通"
+stop_tunnel
+
 # ── S7：单实例锁 ────────────────────────────────────────────────────────────
 sec "S7. 重复启动不应抢端口（单实例锁）"
 unsquat; sleep 1

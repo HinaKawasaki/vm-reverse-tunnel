@@ -5,6 +5,41 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
+主题：**从"一个能跑的工具"变成"一套能维护的项目"** —— 配置收敛到单一来源、可守护任意服务、双语。
+
+### Added
+
+- `deploy.sh` + `local.env.example`：仓库只放通用值，本机差异写进 gitignored 的
+  `local.env`，由 `deploy.sh` 渲染进 `/etc/default/dsh-tunnel` 的**托管块**
+  （重跑整体替换，块外内容保留）。从此不会再出现"仓库和机器各改各的"。
+- `SERVICE_LABEL`：日志里怎么称呼被守护的服务（不再硬编码 dsh web）。
+- `HEALTH_URL`：用 HTTP 健康检查替代 TCP 连通性判断；端口开着但服务返回 5xx/404 时
+  不会建立隧道（宁可不通，也不暴露半死服务）。
+- `install-vm.sh` 现在会把辅助脚本装成 `vmrt-url` / `vmrt-verify` / `vmrt-setup-key` /
+  `vmrt-uninstall`，删掉克隆目录后命令依然可用。
+- `tests/deploy.sh`：21 项断言，覆盖托管块、幂等、块外内容保留、同机端口自撞检测。
+- `tests/e2e.sh` 新增 S8：`HEALTH_URL` 不通过时拒绝建隧道（并从日志确认
+  `SERVICE_LABEL` 生效）。整套 8 个场景 / 32 项断言。
+- `README.en.md`：完整英文版；中文 README 顶部互链。
+
+### Changed
+
+- `url.sh` 的 `web-url.txt` 默认写到
+  `$XDG_STATE_HOME/vm-reverse-tunnel/`（`~/.local/state/...`），装到 `/usr/local/bin`
+  之后普通用户也能写。
+- `uninstall.sh` 一并清理 `vmrt-*` 辅助命令。
+- README 新增「守护别的服务（不限于 dsh web）」与 Jupyter 示例。
+- CI 的离线校验 job 增加 `tests/deploy.sh`。
+
+### Fixed
+
+- `deploy.sh` 的 EXIT trap 在 `--destdir` 模式下会让脚本以非零码退出（自测时发现：
+  清理函数最后一条 `[ -n "" ] && rm` 返回 1，把退出码带偏）。
+- `deploy.sh` 曾错误地把"虚拟机端口 == 宿主机落地端口"判为自撞；两台机器上这是
+  默认形态，只有 `SSH_HOST` 指向本机时才需要拦。
+
 ## [0.2.0] - 2026-10-25
 
 主题：**让"能不能改"变成"敢改"** —— 补测试、补可观测性、修掉会误伤用户的边角。
