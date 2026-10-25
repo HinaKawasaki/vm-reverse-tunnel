@@ -27,5 +27,7 @@ HOST_ADDR=127.0.0.1
 #READY_GRACE=4          # 建连后观察几秒判定成功
 #RETRY_SEC=3            # 重连间隔
 #UPGRADE_CHECK_SEC=60   # 落在回退端口时，多久检查一次首选端口是否空出
+#HEALTH_CHECK_SEC=3     # 隧道存活期多久回探一次本地服务（服务挂了就断开重连）
 #SSH_CONNECT_TIMEOUT=10
 #DSH_POLL_SEC=2
+#LOCK_FILE=/run/dsh-tunnel.lock   # 单实例锁；留空=自动选（非 root 时退到 /tmp）

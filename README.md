@@ -48,6 +48,9 @@ libvirt 默认的 NAT 网络里，虚拟机在宿主机身后，宿主机**不�
   若首选端口被别的程序占用（比如 VS Code 的远程端口转发），自动落到回退端口；等首选端口空出后**自动重连升级回去**。
 - **不需要宿主机做端口转发、不需要知道虚拟机 IP**：虚拟机 IP 变了也无所谓，因为是虚拟机连出来。
 - **默认只绑宿主机回环**，不碰宿主机 sshd 配置；要局域网访问时再显式开启（见下）。
+- **后端失联自动断开重连**：隧道存活期间每 `HEALTH_CHECK_SEC`（默认 3s）回探一次本地服务；
+  服务崩溃/重启时主动断开隧道，避免宿主机端口"假活着"（能连上但 502/connection refused）。
+- **单实例锁**：同一台机器上重复启动（比如手动一份 + systemd 一份）会直接退出，不会互抢端口。
 - **运维小工具**：`verify.sh` 端到端体检（能区分"我们的隧道"和"别人的转发"），`url.sh` 直接打印登录 URL。
 
 ## 前置条件
@@ -108,6 +111,8 @@ units/dsh-tunnel.service.in   # 隧道守护（模板）
 | `SSH_PORT` / `SSH_USER` / `SSH_KEY` | `22` / 当前用户 / `~/.ssh/dsh-remote` | 宿主机 sshd 端口、账号、私钥 |
 | `HOST_PORT_CANDIDATES` | `"3080 3000"` | 宿主机落地端口，按优先级尝试；第一个是首选 |
 | `HOST_ADDR` | `127.0.0.1` | 隧道绑定地址；`0.0.0.0` 才对外（需宿主机 GatewayPorts） |
+| `HEALTH_CHECK_SEC` | `3` | 隧道存活期回探本地服务的间隔 |
+| `LOCK_FILE` | 自动 | 单实例锁文件；非 root 时自动退到 `$TMPDIR` |
 | `READY_GRACE` / `RETRY_SEC` / `UPGRADE_CHECK_SEC` … | `4` / `3` / `60` | 时序参数，一般不用动 |
 
 改完执行 `sudo systemctl restart dsh-tunnel.service`。
