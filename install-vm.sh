@@ -64,14 +64,21 @@ NODE_BIN_DIR="$(dirname "$(command -v node 2>/dev/null || printf '%s' "$SVC_BIN"
 # （以前这里留了字面量 .../OWNER/...，装完之后 systemctl status 里是个死链）
 REPO_URL="${REPO_URL:-}"
 if [ -z "$REPO_URL" ] && command -v git >/dev/null 2>&1; then
-  REPO_URL="$(git -C "$SRC_DIR" config --get remote.origin.url 2>/dev/null || true)"
+  # -c safe.directory：安装通常以 root 执行，而仓库往往属于普通用户；
+  # 不加这个，git 会以 "dubious ownership" 直接失败，REPO_URL 静默退化成 file:…，
+  # systemd 里就只剩一个指向本地 README 的链接。
+  REPO_URL="$(git -c safe.directory="$SRC_DIR" -C "$SRC_DIR" \
+                config --get remote.origin.url 2>/dev/null || true)"
 fi
 case "$REPO_URL" in
   git@github.com:*)        REPO_URL="https://github.com/${REPO_URL#git@github.com:}" ;;
   ssh://git@github.com/*)  REPO_URL="https://github.com/${REPO_URL#ssh://git@github.com/}" ;;
 esac
 REPO_URL="${REPO_URL%.git}"
-[ -n "$REPO_URL" ] || REPO_URL="file:$SRC_DIR/README.md"
+if [ -z "$REPO_URL" ]; then
+  REPO_URL="file:$SRC_DIR/README.md"
+  echo "[install-vm] 提示：没读到 git remote，Documentation 将指向本地 README"
+fi
 
 echo "[install-vm] SVC_USER=$SVC_USER"
 echo "[install-vm] SVC_HOME=$SVC_HOME"

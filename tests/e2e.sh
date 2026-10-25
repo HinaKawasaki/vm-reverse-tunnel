@@ -337,6 +337,29 @@ elif listening "$FALLBACK" && [ "$(serving "$FALLBACK")" = "200" ]; then PORT_A=
 [ -n "$PORT_A" ] && ok "第一个实例未受影响（:$PORT_A 仍 200）" || bad "第一个实例被第二个实例干扰了（端口都不通）"
 stop_tunnel
 
+# ── S9：默认 LOCK_FILE（/run 不可写时的回退）────────────────────────────────
+sec "S9. 未指定 LOCK_FILE 时，日志里不该出现权限错误"
+stop_tunnel; unsquat 2>/dev/null
+[ -n "$BACKEND_PID" ] || start_backend
+DEF_LOCK="${TMPDIR:-/tmp}/dsh-tunnel.$(id -u).lock"
+rm -f "$DEF_LOCK"
+: >"$W/tun.log"
+env -i PATH="$PATH" HOME="$HOME" \
+    SSH_HOST="$SSH_HOST_T" SSH_PORT="$SSH_PORT_T" SSH_USER="$SSH_USER_T" SSH_KEY="$SSH_KEY_T" \
+    LOCAL_ADDR=127.0.0.1 LOCAL_PORT="$LOCAL_PORT_T" HOST_ADDR=127.0.0.1 \
+    HOST_PORT_CANDIDATES="$PREFERRED $FALLBACK" \
+    READY_GRACE=2 RETRY_SEC=2 DSH_POLL_SEC=1 UPGRADE_CHECK_SEC=999 \
+    setsid bash "$TUNNEL_SH" >>"$W/tun.log" 2>&1 &
+TUN_PID=$!
+if wait_log "隧道已建立" 20; then ok "未指定 LOCK_FILE 也能正常建立"; else bad "没建立起来"; show_log; fi
+if grep -qE "权限不够|Permission denied|/(run)/dsh-tunnel" "$W/tun.log"; then
+  bad "日志里出现了锁文件权限报错：$(grep -E '权限不够|Permission denied' "$W/tun.log" | head -1)"
+else
+  ok "日志干净（没有权限报错）"
+fi
+if [ -f "$DEF_LOCK" ]; then ok "/run 不可写时锁回退到 $DEF_LOCK"; else inf "没找到 $DEF_LOCK（当前用户可能对 /run 可写）"; fi
+stop_tunnel
+
 # ── 汇总 ────────────────────────────────────────────────────────────────────
 sec "汇总"
 printf '  通过 %d，失败 %d，发现缺陷 %d\n' "$pass" "$fail" "$bugs"

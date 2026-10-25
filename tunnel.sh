@@ -88,14 +88,20 @@ preferred_port() { printf '%s\n' "${HOST_PORT_CANDIDATES%% *}"; }
 acquire_lock() {
   local f="$LOCK_FILE"
   if [ -z "$f" ]; then
-    f=/run/dsh-tunnel.lock
-    # 非 root 时 /run 不可写，退到用户级临时目录
-    : >>"$f" 2>/dev/null || f="${TMPDIR:-/tmp}/dsh-tunnel.$(id -u).lock"
+    if [ -w /run ]; then
+      f=/run/dsh-tunnel.lock
+    else
+      # 非 root 时 /run 不可写：先判断再选，别在这里硬试——
+      # 重定向失败的那行 "权限不够" 会漏进 journal，看着像出错。
+      f="${TMPDIR:-/tmp}/dsh-tunnel.$(id -u).lock"
+    fi
   fi
-  if ! exec 9>>"$f" 2>/dev/null; then
+  # 先确认能创建（子 shell 里试，错误一并丢弃），成功后再把 fd 9 留在当前进程
+  if ! ( : >>"$f" ) 2>/dev/null; then
     log "警告：无法创建锁文件 ${f}，跳过单实例保护"
     return 0
   fi
+  exec 9>>"$f" || return 0
   if ! flock -n 9; then
     log "已有实例在运行（锁 ${f}），本实例退出"
     exit 0

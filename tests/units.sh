@@ -99,9 +99,25 @@ else
   printf '  \033[33m•\033[0m 没有 systemd-analyze，跳过（Debian/Ubuntu: apt install systemd）\n'
 fi
 
-sec "5. 没有 git remote 时的回退（不能退回 OWNER）"
 STAGE2="$TMP/stage2"
-if ! git -C "$REPO" remote get-url origin >/dev/null 2>&1; then
+if git -C "$REPO" remote get-url origin >/dev/null 2>&1; then
+  sec "5. 有 git remote 时推导 https 文档地址"
+  STAGE3="$TMP/stage3"
+  DESTDIR="$STAGE3" SVC_USER="$(id -un)" SVC_HOME="$HOME" SVC_BIN=/bin/true LOCAL_PORT=3080 \
+    bash "$REPO/install-vm.sh" >"$TMP/install3.log" 2>&1 || bad "安装失败"
+  doc=$(grep '^Documentation=' "$STAGE3/etc/systemd/system/dsh-tunnel.service" 2>/dev/null || true)
+  case "$doc" in
+    *"https://github.com/"*) ok "从 remote 推导：$doc" ;;
+    *OWNER*)              bad "仍然是 OWNER 死链：$doc" ;;
+    *"file:"*)            bad "退化成了本地文件（权限/ownership 问题没处理）：$doc" ;;
+    *)                    bad "结果异常：${doc:-（空）}" ;;
+  esac
+  case "$doc" in
+    *.git) bad "没有去掉 .git 后缀：$doc" ;;
+    *)     ok "URL 已去掉 .git 后缀" ;;
+  esac
+else
+  sec "5. 没有 git remote 时的回退（不能退回 OWNER）"
   DESTDIR="$STAGE2" SVC_USER="$(id -un)" SVC_HOME="$HOME" SVC_BIN=/bin/true LOCAL_PORT=3080 \
     bash "$REPO/install-vm.sh" >"$TMP/install2.log" 2>&1 || bad "无 REPO_URL 时安装失败"
   doc=$(grep '^Documentation=' "$STAGE2/etc/systemd/system/dsh-tunnel.service" 2>/dev/null || true)
@@ -111,8 +127,6 @@ if ! git -C "$REPO" remote get-url origin >/dev/null 2>&1; then
     https://*|'')            ok "回退结果可接受：${doc:-（空）}" ;;
     *)                       bad "回退结果异常：$doc" ;;
   esac
-else
-  printf '  \033[33m•\033[0m 仓库配了 remote，跳过回退测试（CI 里会覆盖）\n'
 fi
 
 sec "汇总"

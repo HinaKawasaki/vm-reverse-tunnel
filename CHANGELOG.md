@@ -5,6 +5,28 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-25
+
+在实际部署（`sudo bash deploy.sh`）后的核查中发现的回归，均为小修。
+
+### Fixed
+
+- **每次启动都往 journal 里喷一行 `/run/dsh-tunnel.lock: 权限不够`**：
+  `acquire_lock` 原先"先硬试再回退"，重定向失败的报错会漏进日志（看着像出错，
+  实际锁已正确退到 `/tmp/dsh-tunnel.<uid>.lock`）。改为先判断 `/run` 是否可写再选路径，
+  并用子 shell 预创建、成功后才在当前进程 `exec 9>>`。
+- **以 root 安装时 `Documentation=` 退化成 `file:…`**：`install-vm.sh` 用
+  `git -C "$SRC_DIR" config` 读 remote，但仓库通常属于普通用户，root 执行会被
+  git 以 "dubious ownership" 拒绝，导致静默回退到本地 README。
+  现改为 `git -c safe.directory="$SRC_DIR" …`，推不出来时还会打印提示。
+
+### Added
+
+- `tests/e2e.sh` 新增 S9：未指定 `LOCK_FILE` 时日志不得出现权限报错，且锁落到 `/tmp`；
+  整套扩到 9 个场景 / 35 项断言。
+- `tests/units.sh` 新增：有 git remote 时断言 `Documentation=` 是推导出的 https 地址、
+  且去掉了 `.git` 后缀（覆盖上面那个 root 安装的坑）。
+
 ## [0.3.0] - 2026-10-25
 
 主题：**从"一个能跑的工具"变成"一套能维护的项目"** —— 配置收敛到单一来源、可守护任意服务、双语。
